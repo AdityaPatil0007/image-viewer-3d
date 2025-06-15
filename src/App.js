@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { Html } from "@react-three/drei";
 
-// 🖼️ Image Component
+// 🖼️ Image Component with Click-to-Focus
 function ImageHtml({ url, position, onClick }) {
   return (
     <Html position={position} transform occlude>
@@ -22,9 +22,9 @@ function ImageHtml({ url, position, onClick }) {
   );
 }
 
-// 🎥 CameraRig
-function CameraRig({ cameraControl, focusTarget }) {
-  const { camera } = useThree();
+// 🎥 CameraRig with Drag + Zoom toward cursor
+function CameraRig({ cameraControl }) {
+  const { camera, gl: renderer } = useThree();
 
   const targetX = useRef(0);
   const targetY = useRef(0);
@@ -34,15 +34,6 @@ function CameraRig({ cameraControl, focusTarget }) {
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
 
-  // Update camera target when image is clicked
-  useEffect(() => {
-    if (focusTarget) {
-      targetX.current = focusTarget[0];
-      targetY.current = focusTarget[1];
-      targetZ.current = focusTarget[2] + 10;
-    }
-  }, [focusTarget]);
-
   useEffect(() => {
     if (cameraControl) {
       cameraControl.current = {
@@ -50,6 +41,11 @@ function CameraRig({ cameraControl, focusTarget }) {
           targetX.current = 0;
           targetY.current = 0;
           targetZ.current = 10;
+        },
+        focusOn: (x, y, z) => {
+          targetX.current = x;
+          targetY.current = y;
+          targetZ.current = z + 5;
         },
       };
     }
@@ -62,12 +58,32 @@ function CameraRig({ cameraControl, focusTarget }) {
     };
     const handleWheel = (e) => {
       e.preventDefault();
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+
       if (ctrlPressed.current) {
-        targetZ.current += e.deltaY * 0.05;
-      } else {
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  const point = raycaster.ray.origin
+    .clone()
+    .add(raycaster.ray.direction.clone().multiplyScalar(10));
+
+  const zoomFactor = -e.deltaY * 0.5; // ✅ Fixed direction
+  const direction = point.clone().sub(camera.position).normalize();
+
+  targetX.current += direction.x * zoomFactor;
+  targetY.current += direction.y * zoomFactor;
+  targetZ.current += direction.z * zoomFactor;
+}
+ else {
         targetY.current += e.deltaY * 0.06;
       }
     };
+
     const handleMouseDown = (e) => {
       isDragging.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
@@ -110,7 +126,7 @@ function CameraRig({ cameraControl, focusTarget }) {
   return null;
 }
 
-// 🌄 Scene Renderer
+// 🖼️ Scene with Grid Images
 function Scene({ images, onImageClick }) {
   const spacingX = 19;
   const spacingY = 16;
@@ -123,14 +139,9 @@ function Scene({ images, onImageClick }) {
         const row = Math.floor(i / numCols);
         const x = (col - numCols / 2) * spacingX;
         const y = -(row * spacingY);
-        const z = (Math.random() - 0.5) * 25;
+        const z = (Math.random() - 0.5) * 45;
         return (
-          <ImageHtml
-            key={i}
-            url={img}
-            position={[x, y, z]}
-            onClick={onImageClick}
-          />
+          <ImageHtml key={i} url={img} position={[x, y, z]} onClick={onImageClick} />
         );
       })}
     </>
@@ -141,7 +152,6 @@ function Scene({ images, onImageClick }) {
 function App() {
   const [images, setImages] = useState([]);
   const [location, setLocation] = useState(null);
-  const [focusTarget, setFocusTarget] = useState(null);
   const cameraControl = useRef(null);
 
   useEffect(() => {
@@ -151,15 +161,10 @@ function App() {
     );
   }, []);
 
-  const handleImageClick = (position) => {
-    setFocusTarget(position);
-  };
-
   return (
     <>
-      {/* UI Buttons */}
+      {/* Buttons */}
       <div style={{ position: "absolute", top: 20, left: 20, zIndex: 10 }}>
-        {/* 📁 Select Folder */}
         <label
           style={{
             background: "#222",
@@ -192,12 +197,8 @@ function App() {
           />
         </label>
 
-        {/* 🔄 Reset View */}
         <button
-          onClick={() => {
-            cameraControl.current?.reset();
-            setFocusTarget(null);
-          }}
+          onClick={() => cameraControl.current?.reset()}
           style={{
             background: "#007BFF",
             color: "#fff",
@@ -212,7 +213,7 @@ function App() {
         </button>
       </div>
 
-      {/* 🎨 3D Canvas */}
+      {/* Canvas */}
       {location ? (
         <Canvas
           style={{
@@ -225,11 +226,13 @@ function App() {
           }}
           camera={{ position: [0, 0, 10], fov: 75 }}
         >
-          <CameraRig
-            cameraControl={cameraControl}
-            focusTarget={focusTarget}
+          <CameraRig cameraControl={cameraControl} />
+          <Scene
+            images={images}
+            onImageClick={(pos) =>
+              cameraControl.current?.focusOn(pos[0], pos[1], pos[2])
+            }
           />
-          <Scene images={images} onImageClick={handleImageClick} />
         </Canvas>
       ) : (
         <p style={{ textAlign: "center", marginTop: "40vh" }}>
